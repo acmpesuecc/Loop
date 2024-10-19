@@ -85,6 +85,11 @@ export const Navbar = () => {
         </Button>
       </NavbarItem>
       <NavbarItem>
+        <Button className="hidden lg:flex font-extrabold" as={Link} color="primary" href="/ideaboard" variant="flat">
+          IdeaBoard
+        </Button>
+      </NavbarItem>
+      <NavbarItem>
       <Button className="hidden lg:flex font-extrabold" as={Link} color="primary" href="/user?id=${user}" variant="flat">
           Account
         </Button>
