@@ -38,7 +38,7 @@ export default function IdeaBoardPage() {
   const fetchIdeas = async () => {
     try {
       setIsLoading(true);
-      const response = await fetch('/api/ideas');
+      const response = await fetch('http://localhost:8080/api/ideas');
       if (!response.ok) {
         throw new Error('Failed to fetch ideas');
       }
@@ -74,18 +74,18 @@ export default function IdeaBoardPage() {
     if (validateForm()) {
       try {
         setIsLoading(true);
-        const response = await fetch('/api/ideas', {
+        const response = await fetch('http://localhost:8080/api/ideas', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(newIdea),
         });
-
+  
         if (!response.ok) {
           throw new Error('Failed to create idea');
         }
-
+  
         const createdIdea = await response.json();
         setIdeas([createdIdea, ...ideas]);
         setNewIdea({ title: '', description: '' });

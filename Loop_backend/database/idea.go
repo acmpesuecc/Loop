@@ -1,156 +1,102 @@
-// schema.sql
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
-CREATE TABLE IF NOT EXISTS ideas (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    title VARCHAR(255) NOT NULL,
-    description TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-// models/idea.go
-package models
+package main
 
 import (
+    "encoding/json"
+    "log"
+    "net/http"
     "time"
+    "github.com/gorilla/mux"
     "github.com/google/uuid"
 )
 
 type Idea struct {
-    ID          uuid.UUID `json:"id" db:"id"`
-    Title       string    `json:"title" db:"title"`
-    Description string    `json:"description" db:"description"`
-    CreatedAt   time.Time `json:"created_at" db:"created_at"`
+    ID          string    `json:"id"`
+    Title       string    `json:"title"`
+    Description string    `json:"description"`
+    CreatedAt   time.Time `json:"created_at"`
 }
 
-type CreateIdeaRequest struct {
-    Title       string `json:"title" binding:"required"`
-    Description string `json:"description" binding:"required"`
-}
-
-// handlers/idea.go
-package handlers
-
-import (
-    "database/sql"
-    "net/http"
-    "your-project/models"
-    "github.com/gin-gonic/gin"
-    "github.com/lib/pq"
-)
-
-type IdeaHandler struct {
-    db *sql.DB
-}
-
-func NewIdeaHandler(db *sql.DB) *IdeaHandler {
-    return &IdeaHandler{db: db}
-}
-
-func (h *IdeaHandler) CreateIdea(c *gin.Context) {
-    var req models.CreateIdeaRequest
-    if err := c.ShouldBindJSON(&req); err != nil {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
-        return
-    }
-
-    var idea models.Idea
-    err := h.db.QueryRow(`
-        INSERT INTO ideas (title, description)
-        VALUES ($1, $2)
-        RETURNING id, title, description, created_at
-    `, req.Title, req.Description).Scan(
-        &idea.ID,
-        &idea.Title,
-        &idea.Description,
-        &idea.CreatedAt,
-    )
-
-    if err != nil {
-        if pqErr, ok := err.(*pq.Error); ok {
-            // Handle specific PostgreSQL errors
-            switch pqErr.Code {
-            case "23505": // unique_violation
-                c.JSON(http.StatusConflict, gin.H{"error": "Idea already exists"})
-                return
-            default:
-                c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create idea"})
-                return
-            }
-        }
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create idea"})
-        return
-    }
-
-    c.JSON(http.StatusCreated, idea)
-}
-
-func (h *IdeaHandler) GetIdeas(c *gin.Context) {
-    rows, err := h.db.Query(`
-        SELECT id, title, description, created_at
-        FROM ideas
-        ORDER BY created_at DESC
-    `)
-    if err != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch ideas"})
-        return
-    }
-    defer rows.Close()
-
-    var ideas []models.Idea
-    for rows.Next() {
-        var idea models.Idea
-        if err := rows.Scan(
-            &idea.ID,
-            &idea.Title,
-            &idea.Description,
-            &idea.CreatedAt,
-        ); err != nil {
-            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process ideas"})
-            return
-        }
-        ideas = append(ideas, idea)
-    }
-
-    if err = rows.Err(); err != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Error while iterating ideas"})
-        return
-    }
-
-    c.JSON(http.StatusOK, ideas)
-}
-
-// main.go
-package main
-
-import (
-    "database/sql"
-    "log"
-    "your-project/handlers"
-    "github.com/gin-gonic/gin"
-    "github.com/lib/pq"
-)
+var ideas []Idea
 
 func main() {
-    // Database connection
-    db, err := sql.Open("postgres", "postgres://username:password@localhost:5432/dbname?sslmode=disable")
-    if err != nil {
-        log.Fatal(err)
+    router := mux.NewRouter()
+
+    // Middleware for JSON content type
+    router.Use(func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            w.Header().Set("Content-Type", "application/json")
+            next.ServeHTTP(w, r)
+        })
+    })
+
+    // Routes
+    router.HandleFunc("/api/ideas", getIdeas).Methods("GET")
+    router.HandleFunc("/api/ideas", createIdea).Methods("POST")
+    router.HandleFunc("/api/ideas/{id}", getIdea).Methods("GET")
+    router.HandleFunc("/api/ideas/{id}", updateIdea).Methods("PUT")
+    router.HandleFunc("/api/ideas/{id}", deleteIdea).Methods("DELETE")
+
+    log.Fatal(http.ListenAndServe(":8080", router))
+}
+
+func getIdeas(w http.ResponseWriter, r *http.Request) {
+    json.NewEncoder(w).Encode(ideas)
+}
+
+func createIdea(w http.ResponseWriter, r *http.Request) {
+    var newIdea Idea
+    if err := json.NewDecoder(r.Body).Decode(&newIdea); err != nil {
+        http.Error(w, err.Error(), http.StatusBadRequest)
+        return
     }
-    defer db.Close()
 
-    if err = db.Ping(); err != nil {
-        log.Fatal(err)
+    newIdea.ID = uuid.New().String()
+    newIdea.CreatedAt = time.Now()
+    ideas = append([]Idea{newIdea}, ideas...) // Add to beginning of slice
+
+    w.WriteHeader(http.StatusCreated)
+    json.NewEncoder(w).Encode(newIdea)
+}
+
+func getIdea(w http.ResponseWriter, r *http.Request) {
+    params := mux.Vars(r)
+    for _, item := range ideas {
+        if item.ID == params["id"] {
+            json.NewEncoder(w).Encode(item)
+            return
+        }
+    }
+    http.Error(w, "Idea not found", http.StatusNotFound)
+}
+
+func updateIdea(w http.ResponseWriter, r *http.Request) {
+    params := mux.Vars(r)
+    var updatedIdea Idea
+    if err := json.NewDecoder(r.Body).Decode(&updatedIdea); err != nil {
+        http.Error(w, err.Error(), http.StatusBadRequest)
+        return
     }
 
-    r := gin.Default()
-
-    ideaHandler := handlers.NewIdeaHandler(db)
-
-    r.POST("/api/ideas", ideaHandler.CreateIdea)
-    r.GET("/api/ideas", ideaHandler.GetIdeas)
-
-    if err := r.Run(":8080"); err != nil {
-        log.Fatal(err)
+    for i, item := range ideas {
+        if item.ID == params["id"] {
+            updatedIdea.ID = item.ID
+            updatedIdea.CreatedAt = item.CreatedAt
+            ideas[i] = updatedIdea
+            json.NewEncoder(w).Encode(updatedIdea)
+            return
+        }
     }
+    http.Error(w, "Idea not found", http.StatusNotFound)
+}
+
+func deleteIdea(w http.ResponseWriter, r *http.Request) {
+    params := mux.Vars(r)
+    for i, item := range ideas {
+        if item.ID == params["id"] {
+            ideas = append(ideas[:i], ideas[i+1:]...)
+            w.WriteHeader(http.StatusNoContent)
+            return
+        }
+    }
+    http.Error(w, "Idea not found", http.StatusNotFound)
 }
